@@ -26,6 +26,10 @@
 
 #include <math.h>
 
+#ifndef HAS_SDL_JOYSTICK
+#define HAS_SDL_JOYSTICK
+#endif
+
 #ifdef HAS_SDL_JOYSTICK
 #include <SDL/SDL.h>
 
