@@ -21,21 +21,17 @@
  */
 #pragma once
 
-#include "Tag.h"
+#include "GameInfoTag.h"
 
 namespace GAME_INFO
 {
-  class CGameboyTag : public CTag
+  class CGameboyTag
   {
   public:
-    CGameboyTag() { }
-    virtual ~CGameboyTag() { }
-    virtual bool Read(const CStdString& strFile);
-
-    static const char *TranslatePublisher(const char *code);
+    static void Load(const CStdString& strPath, CGameInfoTag &gameInfoTag);
 
   private:
-    uint8_t   *m_data;
-    int        m_dataSize;
+    friend class CGBATag;
+    static const char *TranslatePublisher(const char *code);
   };
 }

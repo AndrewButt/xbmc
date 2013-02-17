@@ -2999,6 +2999,7 @@
     <ClCompile Include="..\..\xbmc\interfaces\python\PyContext.cpp">
       <Filter>interfaces\python</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\xbmc\video\FFmpegVideoDecoder.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\xbmc\win32\pch.h">
@@ -5644,9 +5645,6 @@
     <ClInclude Include="..\..\xbmc\games\tags\GBATag.h">
       <Filter>games\tags</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\xbmc\games\tags\Tag.h">
-      <Filter>games\tags</Filter>
-    </ClInclude>
     <ClInclude Include="..\..\xbmc\games\tags\GameboyTag.h">
       <Filter>games\tags</Filter>
     </ClInclude>
@@ -5854,6 +5852,8 @@
     <ClInclude Include="..\..\xbmc\interfaces\python\PyContext.h">
       <Filter>interfaces\python</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\xbmc\music\karaoke\karaokevideobackground.h" />
+    <ClInclude Include="..\..\xbmc\video\FFmpegVideoDecoder.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="..\..\xbmc\win32\XBMC_PC.rc">

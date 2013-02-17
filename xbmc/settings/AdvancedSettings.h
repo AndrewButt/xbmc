@@ -347,6 +347,9 @@ class CAdvancedSettings
     DatabaseSettings m_databaseTV;    // advanced tv database setup
     DatabaseSettings m_databaseEpg;   /*!< advanced EPG database setup */
 
+    unsigned int m_iGameAudioBuffer; // milliseconds
+    bool m_bPreferVFS;
+
     bool m_guiVisualizeDirtyRegions;
     int  m_guiAlgorithmDirtyRegions;
     int  m_guiDirtyRegionNoFlipTimeout;

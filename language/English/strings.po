@@ -10405,7 +10405,11 @@ msgctxt "#24024"
 msgid "Emulators"
 msgstr ""
 
-#empty strings from id 24025 to 24026
+msgctxt "#24025"
+msgid "Manage emulators..."
+msgstr ""
+
+#empty string with id 24026
 
 msgctxt "#24027"
 msgid "Weather"

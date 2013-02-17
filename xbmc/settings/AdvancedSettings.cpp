@@ -318,6 +318,9 @@ void CAdvancedSettings::Initialize()
   m_airPlayPort = 36667;
   m_initialized = true;
 
+  m_iGameAudioBuffer = 500;
+  m_bPreferVFS = false;
+
   m_databaseMusic.Reset();
   m_databaseVideo.Reset();
 
@@ -1049,6 +1052,13 @@ void CAdvancedSettings::ParseSettingsFile(const CStdString &file)
     XMLUtils::GetBoolean(pElement, "visualizedirtyregions", m_guiVisualizeDirtyRegions);
     XMLUtils::GetInt(pElement, "algorithmdirtyregions",     m_guiAlgorithmDirtyRegions);
     XMLUtils::GetInt(pElement, "nofliptimeout",             m_guiDirtyRegionNoFlipTimeout);
+  }
+
+  pElement = pRootElement->FirstChildElement("games");
+  if (pElement)
+  {
+    XMLUtils::GetUInt(pElement, "audiobuffer", m_iGameAudioBuffer);
+    XMLUtils::GetBoolean(pElement, "prefervfs", m_bPreferVFS);
   }
 
   // load in the GUISettings overrides:

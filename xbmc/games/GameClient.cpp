@@ -24,18 +24,226 @@
 #include "addons/AddonManager.h"
 #include "Application.h"
 #include "filesystem/File.h"
+#include "filesystem/Directory.h"
+#include "settings/AdvancedSettings.h"
+#include "threads/SingleLock.h"
 #include "URL.h"
 #include "utils/log.h"
 #include "utils/StringUtils.h"
 #include "utils/URIUtils.h"
-#include "threads/SingleLock.h"
 
 #include <limits>
+#include <boost/shared_ptr.hpp>
 
 using namespace ADDON;
+using namespace XFILE;
+
+
+bool CGameClient::IRetroStrategy::GetGameInfo(retro_game_info &info) const
+{
+  info.path = NULL;
+  info.data = NULL;
+  info.size = 0;
+  info.meta = NULL;
+
+  if (!m_useVfs)
+  {
+    info.path = m_path.c_str();
+    CLog::Log(LOGINFO, "GameClient: Strategy is valid, client is loading file %s", info.path);
+  }
+  else
+  {
+    void    *data;
+    int64_t length;
+
+    // Load the file from the vfs
+    CFile vfsFile;
+    if (!vfsFile.Open(m_path))
+    {
+      CLog::Log(LOGERROR, "GameClient::CStrategyUseVFS: XBMC cannot open file");
+      return false; // XBMC can't load it, don't expect the game client to
+    }
+
+    length = vfsFile.GetLength();
+
+    // Check for file size overflow (libretro accepts files <= size_t max)
+    if (length == 0 || length >= std::numeric_limits<size_t>::max())
+    {
+      CLog::Log(LOGERROR, "GameClient: Invalid file size: %d bytes", length);
+      return false;
+    }
+
+    data = new unsigned char[(size_t)length];
+
+    // Verify the allocation and read in the data
+    if (!(data && vfsFile.Read(data, length) == length))
+    {
+      CLog::Log(LOGERROR, "GameClient: XBMC failed to read game data");
+      delete[] data;
+      return false;
+    }
+
+    info.data = data;
+    info.size = (size_t)length;
+    CLog::Log(LOGINFO, "GameClient: Strategy is valid, client is loading file from VFS (filesize: %d KB)", info.size);
+  }
+  return true;
+}
+
+bool CGameClient::CStrategyUseHD::CanLoad(const CGameClient &gc, const CFileItem& file)
+{
+  CLog::Log(LOGINFO, "GameClient::CStrategyUseHD: Testing if we can load game from hard drive");
+
+  // Make sure the file is local
+  if (!file.GetAsUrl().GetProtocol().empty())
+  {
+    CLog::Log(LOGINFO, "GameClient::CStrategyUseHD: File is not local (or is inside an archive)");
+    return false;
+  }
+
+  // Make sure the extension is valid
+  if (!gc.IsExtensionValid(URIUtils::GetExtension(file.GetPath())))
+  {
+    CLog::Log(LOGINFO, "GameClient::CStrategyUseHD: Extension %s is not valid", URIUtils::GetExtension(file.GetPath()).c_str());
+    return false;
+  }
+
+  m_path = file.GetPath();
+  m_useVfs = false;
+  return true;
+}
+
+bool CGameClient::CStrategyUseVFS::CanLoad(const CGameClient &gc, const CFileItem& file)
+{
+  CLog::Log(LOGINFO, "GameClient::CStrategyUseVFS: Testing if we can load game from VFS");
+
+  // Obvious check
+  if (!gc.AllowsVFS())
+  {
+    CLog::Log(LOGINFO, "GameClient::CStrategyUseVFS: Game client does not allow VFS");
+    return false;
+  }
+
+  // Make sure the extension is valid
+  CStdString ext = URIUtils::GetExtension(file.GetPath());
+  if (!gc.IsExtensionValid(ext))
+  {
+    CLog::Log(LOGINFO, "GameClient::CStrategyUseVFS: Extension %s is not valid", ext.c_str());
+    return false;
+  }
+
+  m_path = file.GetPath();
+  m_useVfs = true;
+  return true;
+}
+
+bool CGameClient::CStrategyUseParentZip::CanLoad(const CGameClient &gc, const CFileItem& file)
+{
+  CLog::Log(LOGINFO, "GameClient::CStrategyUseParentZip: Testing if the game is in a zip");
+
+  // Can't use parent zip if file isn't a child file of a .zip folder
+  if (!URIUtils::IsInZIP(file.GetPath()))
+  {
+    CLog::Log(LOGINFO, "GameClient::CStrategyUseParentZip: Game is not in a zip file");
+    return false;
+  }
+
+  if (!gc.IsExtensionValid("zip"))
+  {
+    CLog::Log(LOGINFO, "GameClient::CStrategyUseParentZip: This game client does not support zip files");
+    return false;
+  }
+
+  // Make sure we're in the root folder of the zip (no parent folder)
+  CURL parentURL(URIUtils::GetParentPath(file.GetPath()));
+  if (!parentURL.GetFileName().empty())
+  {
+    CLog::Log(LOGINFO, "GameClient::CStrategyUseParentZip: Game is not in the root folder of the zip");
+    return false;
+  }
+
+  // Make sure the container zip is on the local hard disk (or not inside another zip)
+  if (!parentURL.GetProtocol().empty())
+  {
+    CLog::Log(LOGINFO, "GameClient::CStrategyUseParentZip: Zip file is not on the local hard disk");
+    return false;
+  }
+
+  // Found our file
+  m_path = parentURL.GetHostName();
+  m_useVfs = false;
+  return true;
+}
+
+bool CGameClient::CStrategyEnterZip::CanLoad(const CGameClient &gc, const CFileItem& file)
+{
+  CLog::Log(LOGINFO, "GameClient::CStrategyEnterZip: Testing if the file is a zip containing a game");
+
+  // Must be a zip file, clearly
+  if (!URIUtils::GetExtension(file.GetPath()).Equals(".zip"))
+  {
+    CLog::Log(LOGINFO, "GameClient::CStrategyEnterZip: File is not a zip");
+    return false;
+  }
+
+  // Must support loading from the vfs
+  if (!gc.AllowsVFS())
+  {
+    CLog::Log(LOGINFO, "GameClient::CStrategyEnterZip: Game client does not allow VFS");
+    return false;
+  }
+
+  // Look for an internal file. This will screen against valid extensions.
+  CStdString internalFile;
+  if (!gc.GetEffectiveRomPath(file.GetPath(), gc.GetExtensions(), internalFile))
+  {
+    CLog::Log(LOGINFO, "GameClient::CStrategyEnterZip: Zip does not contain a file with a valid extension");
+    return false;
+  }
+
+  m_path = internalFile;
+  m_useVfs = true;
+  return true;
+}
+
 
 CGameClient::DataReceiver::SetPixelFormat_t       CGameClient::_SetPixelFormat      = NULL;
 CGameClient::DataReceiver::SetKeyboardCallback_t  CGameClient::_SetKeyboardCallback = NULL;
+
+
+/* static */
+bool CGameClient::GetEffectiveRomPath(const CStdString &zipPath, const CStdStringArray &validExts, CStdString &effectivePath)
+{
+  // Default case: effective zip file is the zip file itself
+  effectivePath = zipPath;
+
+  // If it's not a zip file, we can't open and explore...
+  if (!URIUtils::GetExtension(zipPath).Equals(".zip"))
+    return false;
+
+  // Enumerate the zip directory, looking for valid extensions
+  CStdString strUrl;
+  URIUtils::CreateArchivePath(strUrl, "zip", zipPath, "");
+
+  CFileItemList itemList;
+  if (CDirectory::GetDirectory(strUrl, itemList, StringUtils::JoinString(validExts, "|"),
+    DIR_FLAG_READ_CACHE | DIR_FLAG_NO_FILE_INFO) && itemList.Size())
+  {
+    // Use the first file discovered
+    effectivePath = itemList[0]->GetPath();
+    return true;
+  }
+  return false;
+}
+
+bool CGameClient::IsExtensionValid(const CStdString &ext) const
+{
+  if (m_validExtensions.empty())
+    return true; // Be optimistic :)
+  CStdString ext2(ext);
+  ext2.ToLower();
+  return std::find(m_validExtensions.begin(), m_validExtensions.end(), ext2) != m_validExtensions.end();
+}
 
 CGameClient::CGameClient(const AddonProps &props) : CAddon(props)
 {
@@ -103,7 +311,7 @@ bool CGameClient::Init()
     return false;
   }
 
-  retro_system_info info = {};
+  retro_system_info info = { };
   m_dll.retro_get_system_info(&info);
   m_clientName      = info.library_name ? info.library_name : "Unknown";
   m_clientVersion   = info.library_version ? info.library_version : "v0.0";
@@ -120,12 +328,12 @@ bool CGameClient::Init()
     return false;
   }
 
-  CLog::Log(LOGERROR, "GameClient: ------------------------------------");
-  CLog::Log(LOGERROR, "GameClient: Loaded DLL for %s", ID().c_str());
-  CLog::Log(LOGERROR, "GameClient: Client: %s at version %s", m_clientName.c_str(), m_clientVersion.c_str());
-  CLog::Log(LOGERROR, "GameClient: Valid extensions: %s", StringUtils::JoinString(m_validExtensions, ", ").c_str());
-  CLog::Log(LOGERROR, "GameClient: Allow VFS: %s, require zip (block extract): %s", m_bAllowVFS ? "yes" : "no", m_bRequireZip ? "yes" : "no");
-  CLog::Log(LOGERROR, "GameClient: ------------------------------------");
+  CLog::Log(LOGINFO, "GameClient: ------------------------------------");
+  CLog::Log(LOGINFO, "GameClient: Loaded DLL for %s", ID().c_str());
+  CLog::Log(LOGINFO, "GameClient: Client: %s at version %s", m_clientName.c_str(), m_clientVersion.c_str());
+  CLog::Log(LOGINFO, "GameClient: Valid extensions: %s", info.valid_extensions ? info.valid_extensions : "-");
+  CLog::Log(LOGINFO, "GameClient: Allow VFS: %s, require zip (block extract): %s", m_bAllowVFS ? "yes" : "no", m_bRequireZip ? "yes" : "no");
+  CLog::Log(LOGINFO, "GameClient: ------------------------------------");
 
   return true;
 }
@@ -149,41 +357,18 @@ void CGameClient::DeInit()
   }
 }
 
-bool CGameClient::CanOpen(const CStdString &filePath, bool checkExtension /* = true */) const
-{
-  // Precondition: Init() must have been called
-  if (!m_dll.IsLoaded())
-    return false;
-
-  if (!m_bAllowVFS)
-  {
-    // Test if path is a local file
-    CURL url(filePath);
-    if (!url.GetProtocol().IsEmpty())
-      return false;
-  }
-
-  // If extensions were specified, make sure we match
-  if (checkExtension && !m_validExtensions.empty())
-  {
-    CStdString strExtension;
-    URIUtils::GetExtension(filePath, strExtension);
-    strExtension.TrimLeft(".");
-
-    return std::find(m_validExtensions.begin(), m_validExtensions.end(), strExtension) != m_validExtensions.end();
-  }
-  return true; // DLL wasn't kind enough to provide extensions, assume the best
-}
-
 bool CGameClient::OpenFile(const CFileItem& file, const DataReceiver &callbacks)
 {
   // Can't open a file without first initializing the DLL...
   if (!m_dll.IsLoaded())
     Init();
 
-  if (!CanOpen(file.GetPath()))
-      return false;
-  
+  if (!file.GetProperty("gameclient").empty() && file.GetProperty("gameclient").asString() != ID())
+  {
+    CLog::Log(LOGERROR, "GameClient: File has \"gameclient\" property set, but it doesn't match mine!");
+    return false;
+  }
+
   // Ensure the default values
   callbacks.SetPixelFormat(RETRO_PIXEL_FORMAT_0RGB1555);
   callbacks.SetKeyboardCallback(NULL);
@@ -204,53 +389,40 @@ bool CGameClient::OpenFile(const CFileItem& file, const DataReceiver &callbacks)
     m_bIsInited = true;
   }
 
-  const char * path = NULL;
-  uint8_t *    data = NULL;
-  uint64_t     length = 0;
+  retro_game_info info;
 
-  // Use the vfs if it's allowed
-  if (m_bAllowVFS)
+  CStrategyUseHD        s1;
+  CStrategyUseParentZip s2;
+  CStrategyUseVFS       s3;
+  CStrategyEnterZip     s4;
+
+  IRetroStrategy *strategies[] = {&s1, &s2, &s3, &s4};
+
+  if (g_advancedSettings.m_bPreferVFS)
   {
-    // If m_bRequireZip is true, the client prefers (or possibly requires) zip files
-    // because they may contain important files. In that case, avoid the vfs
-    CStdString strExtension;
-    URIUtils::GetExtension(file.GetPath(), strExtension);
-    if (!(m_bRequireZip && strExtension.CompareNoCase(".zip") == 0))
-    {
-      XFILE::CFile vfsFile;
-      CStdString strFilePath = file.GetPath();
-      if (!vfsFile.Open(strFilePath))
-        return false;
-      length = vfsFile.GetLength();
-      // Check for file size overflow (libretro accepts files <= size_t max)
-      if (length >= std::numeric_limits<size_t>::max())
-        return false;
+    std::swap(strategies[0], strategies[2]);
+    std::swap(strategies[1], strategies[3]);
+  }
 
-      data = new uint8_t[(size_t)length];
-      if (data)
+  bool success = false;
+  for (unsigned int i = 0; i < sizeof(strategies) / sizeof(strategies[0]); i++)
+  {
+    if (strategies[i]->CanLoad(*this, file) && strategies[i]->GetGameInfo(info))
+    {
+      if (m_dll.retro_load_game(&info))
       {
-        if (length != vfsFile.Read(data, length))
-        {
-          delete[] data;
-          return false;
-        }
+        CLog::Log(LOGINFO, "GameClient: Client successfully loaded game");
+        success = true;
+        break;
+      }
+      else
+      {
+        CLog::Log(LOGINFO, "GameClient: Client failed to load game");
       }
     }
   }
 
-  if (!data)
-  {
-    path = file.GetPath().c_str();
-    length = 0;
-  }
-
-  // This is the structure we fill with info about the file we are loading
-  retro_game_info info;
-  info.path = path; // String or NULL if using info.data
-  info.data = data; // Pointer to full file loaded into memory
-  info.size = (size_t)length; // Size of info.data
-  info.meta = NULL; // Client-specific meta-data; XML memory map
-
+  /*
   bool ret, useMultipleRoms = false;
   if (!useMultipleRoms)
   {
@@ -265,18 +437,10 @@ bool CGameClient::OpenFile(const CFileItem& file, const DataReceiver &callbacks)
     //unsigned int romType = RETRO_GAME_TYPE_SUPER_GAME_BOY;
     ret = m_dll.retro_load_game_special(romType, &info, 1);
   }
+  */
 
-  delete[] data;
-
-  // If ret is 0, we failed to load the game
-  if (!ret)
-  {
-    if (path)
-      CLog::Log(LOGERROR, "GameClient: Failed to load game by path: %s", path);
-    else
-      CLog::Log(LOGERROR, "GameClient: Failed to load game through VFS (filesize: %d KB)", (int)length / 1024);
+  if (!success)
     return false;
-  }
 
   m_bIsPlaying = true;
 
@@ -293,17 +457,17 @@ bool CGameClient::OpenFile(const CFileItem& file, const DataReceiver &callbacks)
   double fps              = av_info.timing.fps; // 60.098811862348406
   double sampleRate       = av_info.timing.sample_rate; // 32040.5
 
-  CLog::Log(LOGDEBUG, "GameClient: ---------------------------------------");
-  CLog::Log(LOGDEBUG, "GameClient: Opened file %s", file.GetPath().c_str());
-  CLog::Log(LOGDEBUG, "GameClient: Base Width: %u", baseWidth);
-  CLog::Log(LOGDEBUG, "GameClient: Base Height: %u", baseHeight);
-  CLog::Log(LOGDEBUG, "GameClient: Max Width: %u", maxWidth);
-  CLog::Log(LOGDEBUG, "GameClient: Max Height: %u", maxHeight);
-  CLog::Log(LOGDEBUG, "GameClient: Aspect Ratio: %f", aspectRatio);
-  CLog::Log(LOGDEBUG, "GameClient: FPS: %f", fps);
-  CLog::Log(LOGDEBUG, "GameClient: Sample Rate: %f", sampleRate);
-  CLog::Log(LOGDEBUG, "GameClient: ---------------------------------------");
-  
+  CLog::Log(LOGINFO, "GameClient: ---------------------------------------");
+  CLog::Log(LOGINFO, "GameClient: Opened file %s", file.GetPath().c_str());
+  CLog::Log(LOGINFO, "GameClient: Base Width: %u", baseWidth);
+  CLog::Log(LOGINFO, "GameClient: Base Height: %u", baseHeight);
+  CLog::Log(LOGINFO, "GameClient: Max Width: %u", maxWidth);
+  CLog::Log(LOGINFO, "GameClient: Max Height: %u", maxHeight);
+  CLog::Log(LOGINFO, "GameClient: Aspect Ratio: %f", aspectRatio);
+  CLog::Log(LOGINFO, "GameClient: FPS: %f", fps);
+  CLog::Log(LOGINFO, "GameClient: Sample Rate: %f", sampleRate);
+  CLog::Log(LOGINFO, "GameClient: ---------------------------------------");
+
   m_frameRate = fps;
   m_sampleRate = sampleRate;
 
@@ -458,7 +622,14 @@ void CGameClient::SetExtensions(const CStdString &strExtensionList)
   {
     if (it->empty())
       continue;
+
+    // Zip crashes EVERY emulator I've tried so far. Skip it.
+    if (it->Equals("zip"))
+      continue;
+
     it->ToLower();
+    (*it) = "." + (*it);
+
     if (std::find(m_validExtensions.begin(), m_validExtensions.end(), *it) == m_validExtensions.end())
       m_validExtensions.push_back(*it);
   }

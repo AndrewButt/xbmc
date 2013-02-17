@@ -216,7 +216,7 @@ namespace XBMCAddon
        *     exif*         : string (See CPictureInfoTag::TranslateString in PictureInfoTag.cpp for valid strings)
        * 
        * Game Value:
-       *     title         : string (Pokémon Blue)
+       *     title         : string (Pokemon Blue)
        *     platform      : string (Atari 2600) - see GameManager.cpp for a list of platforms
        *     region        : string (USA and Canada) - in the future, this might be a single letter (U / J)
        *     publisher     : string (Nintendo)

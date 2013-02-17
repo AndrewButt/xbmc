@@ -184,8 +184,8 @@ void CPlayerCoreFactory::GetPlayers( const CFileItem& item, VECPLAYERCORES &vecC
 
   // Process defaults
 
-  // Set video default player. Check whether it's video first (overrule audio check)
-  // Also push these players in case it is NOT audio either
+  // Set video default player. Check whether it's video first (overrule audio and
+  // game check). Also push these players in case it is NOT audio or game either.
   if (item.IsVideo() || (!item.IsAudio() && !item.IsGame()))
   {
     PLAYERCOREID eVideoDefault = GetPlayerCore("videodefaultplayer");

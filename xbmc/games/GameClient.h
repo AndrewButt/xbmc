@@ -24,7 +24,6 @@
 #include "addons/Addon.h"
 #include "FileItem.h"
 #include "GameClientDLL.h"
-//#include "GameManager.h"
 
 #include <deque>
 #include <vector>
@@ -37,10 +36,79 @@ namespace ADDON
 {
   class CGameClient;
   typedef boost::shared_ptr<CGameClient> GameClientPtr;
- 
+
   class CGameClient : public CAddon
   {
   public:
+    /**
+     * Loading a file in libretro cores is a complicated process. Game clients
+     * support different extensions, some support loading from the VFS, and
+     * some have the ability to load ROMs from within zips. Game clients have
+     * a tendency to lie about their capabilities. Furthermore, different ROMs
+     * can have different results, so it is desireable to try different
+     * strategies upon failure.
+     */
+    class IRetroStrategy
+    {
+    public:
+      IRetroStrategy() : m_useVfs(false) { }
+      virtual ~IRetroStrategy() { }
+      /**
+       * Returns true if this strategy is a viable option. strPath is filled
+       * with the file that should be loaded, either the original file or a
+       * substitute file.
+       */
+      virtual bool CanLoad(const CGameClient &gc, const CFileItem& file) = 0;
+      /**
+       * Populates retro_game_info with results.
+       */
+      bool GetGameInfo(retro_game_info &info) const;
+
+    protected:
+      // Member variables populated with results from CanLoad()
+      CStdString m_path;
+      bool       m_useVfs;
+    };
+
+    /**
+     * Load the file from the local hard disk.
+     */
+    class CStrategyUseHD : public IRetroStrategy
+    {
+    public:
+      virtual bool CanLoad(const CGameClient &gc, const CFileItem& file);
+    };
+
+    /**
+     * Use the VFS to load the file.
+     */
+    class CStrategyUseVFS : public IRetroStrategy
+    {
+    public:
+      virtual bool CanLoad(const CGameClient &gc, const CFileItem& file);
+    };
+
+    /**
+     * If the game client blocks extracting, we don't want to load a file from
+     * within a zip. In this case, we try to use the container zip (parent
+     * folder on the vfs).
+     */
+    class CStrategyUseParentZip : public IRetroStrategy
+    {
+    public:
+      virtual bool CanLoad(const CGameClient &gc, const CFileItem& file);
+    };
+
+    /**
+     * If a zip fails to load, try loading the ROM inside from the zip:// vfs.
+     * Avoid recursion clashes with the above strategy.
+     */
+    class CStrategyEnterZip : public IRetroStrategy
+    {
+    public:
+      virtual bool CanLoad(const CGameClient &gc, const CFileItem& file);
+    };
+
     /**
      * Callback container. Data is passed in and out of the game client through
      * these callbacks.
@@ -65,6 +133,13 @@ namespace ADDON
       DataReceiver(VideoFrame_t vf, AudioSample_t as, AudioSampleBatch_t asb, GetInputState_t is, SetPixelFormat_t spf, SetKeyboardCallback_t skc)
         : VideoFrame(vf), AudioSample(as), AudioSampleBatch(asb), GetInputState(is), SetPixelFormat(spf), SetKeyboardCallback(skc) { }
     };
+
+    /**
+     * Helper function: If strPath is a zip file, this will enumerate its
+     * contents and return the first file inside with a valid extension. If
+     * this returns false, effectivePath will be set to strPath.
+     */
+    static bool GetEffectiveRomPath(const CStdString &zipPath, const CStdStringArray &validExts, CStdString &effectivePath);
 
     CGameClient(const AddonProps &props);
     CGameClient(const cp_extension_t *props);
@@ -107,14 +182,23 @@ namespace ADDON
     const CStdStringArray &GetExtensions() const { return m_validExtensions; }
 
     /**
-     * Returns true if the file can be loaded by the client. If the file is on
-     * the VFS, the client must support loading by memory. If the client can't
-     * load files from memory, then the file path must be passed to the client;
-     * thus, only local files can be used with these clients. If the client
-     * specifies extensions, the file will also be checked against them.
-     * Precondition: Init() must be called first and return true.
+     * If the game client was a bad boy and provided no extensions, this will
+     * optimistically return true.
      */
-    bool CanOpen(const CStdString &filePath, bool checkExtension = true) const;
+    bool IsExtensionValid(const CStdString &ext) const;
+
+    /**
+     * The game client allows files to be loaded with no local path.
+     */
+    bool AllowsVFS() const { return m_bAllowVFS; }
+
+    /**
+     * If false, and ROM is in a zip, ROM file must be loaded from within the
+     * zip instead of extracted to a temporary cache. In XBMC's case, loading
+     * from the VFS is like extraction because the relative paths to the
+     * emulator are not available.
+     */
+    bool BlockZipExtraction() const { return m_bRequireZip; }
 
     bool OpenFile(const CFileItem &file, const DataReceiver &callbacks);
     void CloseFile();

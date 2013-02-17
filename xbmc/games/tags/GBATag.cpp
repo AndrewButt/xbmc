@@ -30,62 +30,55 @@
 using namespace GAME_INFO;
 using namespace XFILE;
 
+
 // Constants and file format data from VBA-M project
 // http://sourceforge.net/projects/vbam
 // This code references VBA-M at r1118, later commits may contain fixes
 
-bool CGBATag::Read(const CStdString& strFile)
+void CGBATag::Load(const CStdString& strPath, CGameInfoTag &gameInfoTag)
 {
-  CTag::Read(strFile);
-  
   CStdString strExtension;
-  URIUtils::GetExtension(strFile, strExtension);
-  strExtension.ToLower();
-  strExtension.TrimLeft('.');
+  URIUtils::GetExtension(strPath, strExtension);
 
-  if (strExtension == "elf")
+  if (strExtension.Equals(".elf"))
   {
     // ELF files not supported yet
-    return false;
+    return;
   }
 
   // Open the file and read in the data
   CFile file;
-  if (!file.Open(strFile))
-    return false;
+  if (!file.Open(strPath))
+    return;
   
   // Useful data is all ASCII, fortunately. Some stats like main unit code,
   // device type, version and CRC are omitted here.
-  char data[0xb0 + 3]; // Until the end of the publisher ID bytes
+  unsigned char data[0xb0 + 3]; // Until the end of the publisher ID bytes
   if (file.Read(data, sizeof(data)) != sizeof(data))
-    return false;
+    return;
 
   // The properties below must all be ASCII text
-  if (!AllASCII(reinterpret_cast<uint8_t*>(data) + 0xa0, 12) ||
-      !AllASCII(reinterpret_cast<uint8_t*>(data) + 0xac, 4) ||
-      !AllASCII(reinterpret_cast<uint8_t*>(data) + 0xb0, 2))
+  if (!AllASCII(data + 0xa0, 12) ||
+      !AllASCII(data + 0xac, 4) ||
+      !AllASCII(data + 0xb0, 2))
   {
     CLog::Log(LOGERROR, "CGBATag: Non-ASCII data encountered while reading image parameters");
-    return false;
+    return;
   }
 
   // Title: $a0, 12 bytes
-  m_gameInfoTag.SetTitle(std::string(data + 0xa0, 12));
+  gameInfoTag.SetTitle(std::string(reinterpret_cast<char*>(data) + 0xa0, 12));
 
   // ID: $ac, 4 bytes
-  m_gameInfoTag.SetID(std::string(data + 0xac, 4));
+  gameInfoTag.SetID(std::string(reinterpret_cast<char*>(data) + 0xac, 4));
 
   // Publisher: $b0, 2 bytes
-  m_gameInfoTag.SetPublisher(CGameboyTag::TranslatePublisher(data + 0xb0));
-
-  m_gameInfoTag.SetPlatform("Game Boy Advance");
-  m_gameInfoTag.SetLoaded(true);
-  return true;
+  gameInfoTag.SetPublisher(CGameboyTag::TranslatePublisher(reinterpret_cast<char*>(data) + 0xb0));
 }
 
-bool CGBATag::AllASCII(uint8_t *b, int size)
+bool CGBATag::AllASCII(unsigned char *b, unsigned int size)
 {
-  for (int i = 0; i < size; i++)
+  for (unsigned int i = 0; i < size; i++)
     if (b[i] < 32 || b[i] > 126)
       return false;
   return true;

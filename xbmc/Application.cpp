@@ -4165,7 +4165,7 @@ bool CApplication::PlayFile(const CFileItem& item, bool bRestart)
        && g_windowManager.GetActiveWindow() != WINDOW_FULLSCREEN_VIDEO )
        SwitchToFullScreen();
 
-      if (!item.IsDVDImage() && !item.IsDVDFile())
+      if (!item.IsDVDImage() && !item.IsDVDFile() && !item.IsGame())
       {
         CVideoInfoTag *details = m_itemCurrentFile->GetVideoInfoTag();
         // Save information about the stream if we currently have no data
@@ -4297,8 +4297,11 @@ void CApplication::OnPlayBackStopped()
   data["end"] = false;
   CAnnouncementManager::Announce(Player, "xbmc", "OnStop", m_itemCurrentFile, data);
 
-  CLastfmScrobbler::GetInstance()->SubmitQueue();
-  CLibrefmScrobbler::GetInstance()->SubmitQueue();
+  if (!m_bStop)
+  {
+    CLastfmScrobbler::GetInstance()->SubmitQueue();
+    CLibrefmScrobbler::GetInstance()->SubmitQueue();
+  }
 
   CGUIMessage msg( GUI_MSG_PLAYBACK_STOPPED, 0, 0 );
   g_windowManager.SendThreadMessage(msg);

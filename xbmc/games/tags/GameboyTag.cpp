@@ -21,9 +21,9 @@
  */
 
 #include "GameboyTag.h"
+#include "GameInfoTagLoader.h"
 #include "filesystem/File.h"
 #include "utils/log.h"
-#include "utils/URIUtils.h"
 
 using namespace GAME_INFO;
 using namespace XFILE;
@@ -32,45 +32,43 @@ using namespace XFILE;
 // http://sourceforge.net/projects/vbam
 // This code references VBA-M at r1118, later commits may contain fixes
 
-bool CGameboyTag::Read(const CStdString& strFile)
+/* static */
+void CGameboyTag::Load(const CStdString& strPath, CGameInfoTag &gameInfoTag)
 {
-  CTag::Read(strFile);
-  
   // Open the file and read in the data
   CFile file;
-  if (!file.Open(strFile))
-    return false;
+  if (!file.Open(strPath))
+    return;
   
   char data[0x147 + 2];
   if (file.Read(data, sizeof(data)) != sizeof(data))
-    return false;
+    return;
 
-  // Platform
+  // Correct the platform if the extension was wrong
   if (data[0x143] & 0x80)
-    m_gameInfoTag.SetPlatform("Game Boy Color");
+    gameInfoTag.SetPlatform(CGameInfoTagLoader::GetPlatformByID(PLATFORM_GAMEBOY_COLOR).name);
   //else if (data[0x146] == 0x03)
-  //  m_gameInfoTag.SetPlatform("Super GameBoy");
+  //  m_gameInfoTag.SetPlatform(CGameInfoTagLoader::GetPlatformByID(PLATFORM_SUPER_GAMEBOY).name);
   else
-    m_gameInfoTag.SetPlatform("Game Boy");
-  
-  
+    gameInfoTag.SetPlatform(CGameInfoTagLoader::GetPlatformByID(PLATFORM_GAMEBOY).name);
+
   // Title: $134, 15 bytes
   for (unsigned int i = 0x134; i < 0x134 + 15; i++)
   {
     if ((0 < data[i] && data[i] < 32) || 126 < data[i]) // zero is ok
     {
       CLog::Log(LOGINFO, "CGameboyTag: Non-ASCII data encountered, assuming it's not a game image");
-      return false;
+      return;
     }
   }
-  m_gameInfoTag.SetTitle(CStdString(std::string(data + 0x134, 15)).Trim());
+  gameInfoTag.SetTitle(CStdString(std::string(data + 0x134, 15)).Trim());
 
   // Publisher: $144, 2 bytes
-  m_gameInfoTag.SetPublisher(CGameboyTag::TranslatePublisher(data + 0x144));
+  gameInfoTag.SetPublisher(CGameboyTag::TranslatePublisher(data + 0x144));
 
   // Cartridge Type: $147, 1 byte
   CStdString type;
-  switch (static_cast<unsigned char>(data[0x147]))
+  switch ((unsigned char)data[0x147])
   {
   case 0x00:
     type = "ROM";
@@ -154,12 +152,7 @@ bool CGameboyTag::Read(const CStdString& strFile)
     type = "ROM+HuC-1";
     break;
   }
-  m_gameInfoTag.SetCartridgeType(type);
-
-  // El Fin
-  m_gameInfoTag.SetLoaded(true);
-
-  return true;
+  gameInfoTag.SetCartridgeType(type);
 }
 
 const char *CGameboyTag::TranslatePublisher(const char *code)

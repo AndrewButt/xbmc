@@ -25,10 +25,12 @@
 #include "cores/dvdplayer/DVDClock.h"
 #include "cores/VideoRenderers/RenderManager.h"
 #include "dialogs/GUIDialogBusy.h"
+#include "dialogs/GUIDialogContextMenu.h"
 #include "games/GameManager.h"
 #include "games/tags/GameInfoTag.h"
 #include "guilib/GUIWindowManager.h"
 #include "guilib/Key.h"
+#include "settings/AdvancedSettings.h"
 #include "utils/log.h"
 #include "utils/StringUtils.h"
 
@@ -67,7 +69,8 @@ bool CRetroPlayer::OpenFile(const CFileItem& file, const CPlayerOptions& options
 
   if (IsRunning())
     CloseFile();
-  
+
+  // Get game info tag (from a mutable file item, if necessary)
   const GAME_INFO::CGameInfoTag *tag = file.GetGameInfoTag();
   CFileItem temp;
   if (!tag)
@@ -77,6 +80,7 @@ bool CRetroPlayer::OpenFile(const CFileItem& file, const CPlayerOptions& options
       tag = temp.GetGameInfoTag();
   }
 
+  // Dump discovered infomation to the debug log
   if (tag)
   {
     CLog::Log(LOGDEBUG, "RetroPlayer: ---------------------------------------");
@@ -92,28 +96,76 @@ bool CRetroPlayer::OpenFile(const CFileItem& file, const CPlayerOptions& options
     CLog::Log(LOGDEBUG, "RetroPlayer: ---------------------------------------");
   }
 
-  m_file = file;
-  m_PlayerOptions = options;
+  // Now we need to see how many game clients contend for this file
+  CStdStringArray candidates;
+  CGameManager::Get().GetGameClientIDs(file, candidates);
+  if (candidates.empty())
+  {
+    CLog::Log(LOGERROR, "RetroPlayer: Error: no suitable game clients");
+    return false;
+  }
+  else if (candidates.size() == 1)
+  {
+    AddonPtr addon;
+    CAddonMgr::Get().GetAddon(candidates[0], addon, ADDON_GAMEDLL);
+    m_gameClient = boost::dynamic_pointer_cast<CGameClient>(addon);
+  }
+  else
+  {
+    CLog::Log(LOGDEBUG, "RetroPlayer: Multiple clients found: %s", StringUtils::JoinString(candidates, ", ").c_str());
+    std::vector<GameClientPtr> clients;
+    CContextButtons choices;
+    for (unsigned int i = 0; i < candidates.size(); i++)
+    {
+      AddonPtr addon;
+      CAddonMgr::Get().GetAddon(candidates[i], addon, ADDON_GAMEDLL);
+      GameClientPtr client = boost::dynamic_pointer_cast<CGameClient>(addon);
+      if (client)
+      {
+        clients.push_back(client);
+        choices.Add(i, client->Name());
+      }
+    }
 
-  m_gameClient = CGameManager::Get().GetGameClient(m_file);
+    // Choice to go to the add-on manager
+    choices.Add(choices.size(), 24025); // "Manage emulators..."
+
+    int btnid = CGUIDialogContextMenu::ShowAndGetChoice(choices);
+    if (btnid < 0 || btnid > (int)clients.size())
+    {
+      CLog::Log(LOGDEBUG, "RetroPlayer: User cancelled game client selection");
+      return false;
+    }
+    else if (btnid == clients.size())
+    {
+      CLog::Log(LOGDEBUG, "RetroPlayer: User chose add-on manager from game client selection dialog");
+      CStdStringArray params;
+      params.push_back("addons://all/xbmc.gameclient");
+      g_windowManager.ActivateWindow(WINDOW_ADDON_BROWSER, params);
+      return false;
+    }
+    m_gameClient = clients[btnid];
+    CLog::Log(LOGDEBUG, "RetroPlayer: Using %s", m_gameClient->ID().c_str());
+  }
+
+  // This really just screens against the dynamic pointer cast
   if (!m_gameClient)
   {
     CLog::Log(LOGERROR, "RetroPlayer: Error: no suitable game clients");
     return false;
   }
+
+  // Load the DLL and retrieve system info from the game client
   if (!m_gameClient->Init())
   {
     CLog::Log(LOGERROR, "RetroPlayer: Failed to init game client %s", m_gameClient->ID().c_str());
     return false;
   }
-  CLog::Log(LOGINFO, "RetroPlayer: Using game client %s at version %s", m_gameClient->GetClientName().c_str(), m_gameClient->GetClientVersion().c_str());
-  if (!m_gameClient->CanOpen(m_file.GetPath(), true))
-  {
-    CLog::Log(LOGERROR, "RetroPlayer: Error: Game client %s does not support file", m_gameClient->ID().c_str());
-    CLog::Log(LOGERROR, "RetroPlayer: Valid extensions are: %s", StringUtils::JoinString(m_gameClient->GetExtensions(), ", ").c_str());
-    m_gameClient.reset();
-    return false;
-  }
+
+  CLog::Log(LOGINFO, "RetroPlayer: Using game client %s at version %s", m_gameClient->GetClientName().c_str(),
+    m_gameClient->GetClientVersion().c_str());
+
+  // We need to store a pointer to ourself before sending the callbacks to the game client
   m_retroPlayer = this;
   if (!m_gameClient->OpenFile(file, m_callbacks))
   {
@@ -121,12 +173,18 @@ bool CRetroPlayer::OpenFile(const CFileItem& file, const CPlayerOptions& options
     m_gameClient.reset();
     return false;
   }
+
+  // Validate the reported framerate
   if (m_gameClient->GetFrameRate() < 5.0 || m_gameClient->GetFrameRate() > 100.0)
   {
     CLog::Log(LOGERROR, "RetroPlayer: Game client reported invalid framerate: %f", (float)m_gameClient->GetFrameRate());
     m_gameClient.reset();
     return false;
   }
+
+  // Success. We use m_file.GetPath() to check if a file is playing in IsPlaying()
+  m_file = file;
+  m_PlayerOptions = options;
 
   g_renderManager.PreInit();
   Create();
@@ -141,6 +199,7 @@ bool CRetroPlayer::CloseFile()
 
   // Set the abort request so that other threads can finish up
   m_bStop = true;
+  m_file = CFileItem();
 
   // Set m_video.m_bStop to false before triggering the event
   m_video.StopThread(false);
@@ -215,9 +274,8 @@ void CRetroPlayer::Process()
     if (nextpts < CDVDClock::GetAbsoluteClock())
       nextpts = CDVDClock::GetAbsoluteClock();
 
-    // Slow down to 0.5x (an extra frame) if the audio is delayed by more than
-    // 0.4s (24 frames @ 60s)
-    if (m_audio.GetDelay() > 0.4)
+    // Slow down to 0.5x (an extra frame) if the audio is delayed
+    if (m_audio.GetDelay() * 1000 > g_advancedSettings.m_iGameAudioBuffer)
       nextpts += frametime * PLAYSPEED_NORMAL / m_playSpeed;
 
     CDVDClock::WaitAbsoluteClock(nextpts);
@@ -296,12 +354,18 @@ void CRetroPlayer::Seek(bool bPlus, bool bLargeStep)
   if (bPlus) // Cannot seek forward in time.
     return;
 
+  if (!m_gameClient)
+    return;
+
   int seek_seconds = bLargeStep ? 10 : 1;
   m_gameClient->RewindFrames(seek_seconds * m_gameClient->GetFrameRate());
 }
 
 void CRetroPlayer::SeekPercentage(float fPercent)
 {
+  if (!m_gameClient)
+    return;
+
   int max_buffer = m_gameClient->RewindFramesAvailMax();
   if (!max_buffer) // Rewind not supported for game.
      return;
@@ -315,6 +379,9 @@ void CRetroPlayer::SeekPercentage(float fPercent)
 
 float CRetroPlayer::GetPercentage()
 {
+  if (!m_gameClient)
+    return 0.0f;
+
   int max_buffer = m_gameClient->RewindFramesAvailMax();
   if (!max_buffer)
      return 0.0f;
@@ -325,6 +392,9 @@ float CRetroPlayer::GetPercentage()
 
 void CRetroPlayer::SeekTime(int64_t iTime)
 {
+  if (!m_gameClient)
+    return;
+
   int current_buffer = m_gameClient->RewindFramesAvail();
   if (!current_buffer) // Rewind not supported for game.
      return;
@@ -337,12 +407,18 @@ void CRetroPlayer::SeekTime(int64_t iTime)
 
 int64_t CRetroPlayer::GetTime()
 {
+  if (!m_gameClient)
+    return 0;
+
   int current_buffer = m_gameClient->RewindFramesAvail();
   return 1000 * current_buffer / m_gameClient->GetFrameRate(); // Millisecs
 }
 
 int64_t CRetroPlayer::GetTotalTime()
 {
+  if (!m_gameClient)
+    return 0;
+
   int max_buffer = m_gameClient->RewindFramesAvailMax();
   return 1000 * max_buffer / m_gameClient->GetFrameRate(); // Millisecs
 }

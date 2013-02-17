@@ -47,7 +47,8 @@ public:
     return false;
   }
 
-  virtual bool IsPlaying() const { return !m_bStop; }
+  // Upon successful open, m_file is set to the opened file
+  virtual bool IsPlaying() const { return !m_bStop && !m_file.GetPath().empty(); }
   virtual void Pause();
   virtual bool IsPaused() const { return m_playSpeed == 0; }
 
@@ -131,12 +132,8 @@ private:
   CRetroPlayerInput    m_input;
   ADDON::GameClientPtr m_gameClient;
 
-  CEvent m_ready;
-  CEvent m_pauseEvent;
-
-  CCriticalSection m_critSection;
-
-  CFileItem      m_file;
-  CPlayerOptions m_PlayerOptions;
-  int            m_playSpeed; // Normal play speed is PLAYSPEED_NORMAL (1000)
+  CFileItem            m_file;
+  CPlayerOptions       m_PlayerOptions;
+  int                  m_playSpeed; // Normal play speed is PLAYSPEED_NORMAL (1000)
+  CEvent               m_pauseEvent;
 };

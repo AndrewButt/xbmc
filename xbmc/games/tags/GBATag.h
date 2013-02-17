@@ -21,18 +21,16 @@
  */
 #pragma once
 
-#include "Tag.h"
+#include "GameInfoTag.h"
 
 namespace GAME_INFO
 {
-  class CGBATag : public CTag
+  class CGBATag
   {
   public:
-    CGBATag() { }
-    virtual ~CGBATag() { }
-    virtual bool Read(const CStdString& strFile);
+    static void Load(const CStdString& strPath, CGameInfoTag &gameInfoTag);
 
   private:
-    static bool  AllASCII(uint8_t *b, int size);
+    static bool AllASCII(unsigned char *b, unsigned int size);
   };
 }

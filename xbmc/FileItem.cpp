@@ -813,7 +813,7 @@ bool CFileItem::IsVideo() const
   if (HasPictureInfoTag()) return false;
   if (IsPVRRecording())  return true;
   if (HasGameInfoTag()) return false;
-  if (!GetProperty("gameclient").asString().empty()) return false;
+  if (!GetProperty("gameclient").empty()) return false;
 
   if (IsHDHomeRun() || IsTuxBox() || URIUtils::IsDVD(m_strPath) || IsSlingbox())
     return true;
@@ -834,6 +834,16 @@ bool CFileItem::IsVideo() const
     return false;
 
   extension.ToLower();
+
+  // If the file is a zip file, ask the game clients if any support this file
+  // before assuming it is video.
+  if (extension.Equals(".zip"))
+  {
+    CStdStringArray clients;
+    CGameManager::Get().GetGameClientIDs(*this, clients, 1);
+    if (!clients.empty())
+      return false;
+  }
 
   return (g_settings.m_videoExtensions.Find(extension) != -1);
 }
@@ -892,7 +902,7 @@ bool CFileItem::IsAudio() const
   if (HasVideoInfoTag()) return false;
   if (HasPictureInfoTag()) return false;
   if (HasGameInfoTag()) return false;
-  if (!GetProperty("gameclient").asString().empty()) return false;
+  if (!GetProperty("gameclient").empty()) return false;
   if (IsCDDA()) return true;
   if (!m_bIsFolder && IsLastFM()) return true;
 
@@ -913,13 +923,22 @@ bool CFileItem::IsAudio() const
 
   extension.ToLower();
 
+  // If the file is a zip file, ask the game clients if any support this file
+  // before assuming it is video.
+  if (extension.Equals(".zip"))
+  {
+    CStdStringArray clients;
+    CGameManager::Get().GetGameClientIDs(*this, clients, 1);
+    if (!clients.empty())
+      return false;
+  }
+
   return (g_settings.m_musicExtensions.Find(extension) != -1);
 }
 
 bool CFileItem::IsGame() const
 {
   if (HasGameInfoTag()) return true;
-  // This field may be set if created by Addons.ExecuteAddon() or XBMC.PlayMedia()
   if (!GetProperty("gameclient").empty()) return true;
   if (HasVideoInfoTag()) return false;
   if (HasMusicInfoTag()) return false;
@@ -928,7 +947,7 @@ bool CFileItem::IsGame() const
   // Ask the game clients if any support this file. If none do, the extension
   // will be screened against the list of extensions in GameManager.cpp.
   CStdStringArray clients;
-  CGameManager::Get().GetGameClientIDs(*this, clients);
+  CGameManager::Get().GetGameClientIDs(*this, clients, 1);
   return !clients.empty();
 }
 
@@ -1263,6 +1282,7 @@ void CFileItem::FillInDefaultIcon()
   //   default picture for photo's
   //   default picture for songs
   //   default picture for videos
+  //   default picture for games
   //   default picture for shortcuts
   //   default picture for playlists
   //   or the icon embedded in an .xbe
@@ -1329,8 +1349,7 @@ void CFileItem::FillInDefaultIcon()
       }
       else if ( IsGame() )
       {
-        // TODO
-        SetIconImage("DefaultFile.png");
+        SetIconImage("DefaultGame.png");
       }
       else
       {
@@ -3129,7 +3148,7 @@ bool CFileItem::LoadGameTag()
   // Load tag from file
   CLog::Log(LOGDEBUG, "%s: loading tag information for file: %s", __FUNCTION__, m_strPath.c_str());
   
-  if (CGameInfoTagLoader::Load(m_strPath, *GetGameInfoTag()))
+  if (CGameInfoTagLoader::Get().Load(m_strPath, *GetGameInfoTag()))
     return true;
 
   return false;
