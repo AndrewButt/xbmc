@@ -30,7 +30,23 @@
 #if defined(TARGET_WINDOWS)
 #include "input/windows/WINJoystick.h"
 #elif defined(HAS_SDL_JOYSTICK) || defined(HAS_EVENT_SERVER)
-#include "SDLJoystick.h"
+#include "input/SDLJoystick.h"
+#endif
+
+#ifndef JOY_POVFORWARD
+#define JOY_POVFORWARD 0
+#endif
+
+#ifndef JOY_POVRIGHT
+#define JOY_POVRIGHT 9000
+#endif
+
+#ifndef JOY_POVBACKWARD
+#define JOY_POVBACKWARD 18000
+#endif
+
+#ifndef JOY_POVLEFT
+#define JOY_POVLEFT 27000
 #endif
 
 #define JOY_POV_360  JOY_POVBACKWARD * 2

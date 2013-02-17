@@ -77,11 +77,11 @@ void CGameManager::RegisterAddon(GameClientPtr clientAddon)
   CSingleLock lock(m_critSection);
 
   // If we are already tracking the add-on, erase it so we can refresh the data
-  for (std::vector<GameClientObject>::const_iterator it = m_gameClients.begin(); it != m_gameClients.end(); it++)
+  for (std::vector<GameClientObject>::iterator it = m_gameClients.begin(); it != m_gameClients.end(); it++)
   {
     if (clientAddon->ID() == it->id)
     {
-      CLog::Log(LOGERROR, "CGameManager: Refreshing information for add-on %s!", clientAddon->ID());
+      CLog::Log(LOGERROR, "CGameManager: Refreshing information for add-on %s!", clientAddon->ID().c_str());
       m_gameClients.erase(it);
       break;
     }
@@ -90,7 +90,7 @@ void CGameManager::RegisterAddon(GameClientPtr clientAddon)
   // Load the DLL
   if (!clientAddon->Init())
   {
-    CLog::Log(LOGERROR, "CGameManager: failed to load the DLL for add-on %s", clientAddon->ID());
+    CLog::Log(LOGERROR, "CGameManager: failed to load the DLL for add-on %s", clientAddon->ID().c_str());
     return;
   }
 

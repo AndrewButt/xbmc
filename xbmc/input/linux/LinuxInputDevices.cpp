@@ -45,6 +45,10 @@
  */
 
 #include "system.h"
+#ifndef HAS_LINUX_EVENTS
+#define HAS_LINUX_EVENTS
+#endif
+
 #if defined(HAS_LINUX_EVENTS)
 
 #include <linux/version.h>

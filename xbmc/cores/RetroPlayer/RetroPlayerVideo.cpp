@@ -135,6 +135,7 @@ void CRetroPlayerVideo::Process()
     }
 
     int index = g_renderManager.AddVideoPicture(*pPicture);
+    (void)index; // disable warning
     g_renderManager.FlipPage(CThread::m_bStop);
     CDVDCodecUtils::FreePicture(pPicture);
     pPicture = NULL;
